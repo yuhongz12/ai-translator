@@ -15,12 +15,22 @@ type Props = {
   onNewChat: () => void;
 };
 
-export default function ChatSidebar({ chats, activeChatId, onSelect, onNewChat }: Props) {
+export default function ChatSidebar({
+  chats,
+  activeChatId,
+  onSelect,
+  onNewChat,
+}: Props) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-2 p-3">
         <div className="text-sm font-medium">Chats</div>
-        <Button size="icon" variant="secondary" className="h-9 w-9" onClick={onNewChat}>
+        <Button
+          size="icon"
+          variant="secondary"
+          className="h-9 w-9"
+          onClick={onNewChat}
+        >
           <Plus className="h-4 w-4" />
         </Button>
       </div>

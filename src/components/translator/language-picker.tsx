@@ -18,7 +18,6 @@ import {
   CommandList,
 } from "@/components/ui/command";
 
-
 type Props = {
   value: string;
   options: readonly string[];
@@ -26,7 +25,12 @@ type Props = {
   ariaLabel: string;
 };
 
-export default function LanguagePicker({ value, options, onChange, ariaLabel }: Props) {
+export default function LanguagePicker({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+}: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -56,13 +60,19 @@ export default function LanguagePicker({ value, options, onChange, ariaLabel }: 
                   key={opt}
                   value={opt}
                   onSelect={(v) => {
-                    const next = options.find((x) => x.toLowerCase() === v.toLowerCase()) ?? opt;
+                    const next =
+                      options.find(
+                        (x) => x.toLowerCase() === v.toLowerCase()
+                      ) ?? opt;
                     onChange(next);
                     setOpen(false);
                   }}
                 >
                   <Check
-                    className={cn("mr-2 h-4 w-4", opt === value ? "opacity-100" : "opacity-0")}
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      opt === value ? "opacity-100" : "opacity-0"
+                    )}
                   />
                   {opt}
                 </CommandItem>

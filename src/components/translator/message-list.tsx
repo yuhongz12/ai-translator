@@ -4,7 +4,6 @@ import { Separator } from "@/components/ui/separator";
 import MessageItem from "./message-item";
 import type { TranscriptItem } from "./types";
 
-
 export default function MessageList({ items }: { items: TranscriptItem[] }) {
   return (
     <ScrollArea className="h-full">
@@ -12,7 +11,9 @@ export default function MessageList({ items }: { items: TranscriptItem[] }) {
         {items.map((it, idx) => (
           <Fragment key={it.id}>
             <MessageItem item={it} />
-            {idx < items.length - 1 ? <Separator className="opacity-60" /> : null}
+            {idx < items.length - 1 ? (
+              <Separator className="opacity-60" />
+            ) : null}
           </Fragment>
         ))}
       </div>

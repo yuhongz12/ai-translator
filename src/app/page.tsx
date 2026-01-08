@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import TranslatorShell from "@/components/translator/translator-shell";
 
