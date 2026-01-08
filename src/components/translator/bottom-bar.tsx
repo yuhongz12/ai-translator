@@ -81,7 +81,7 @@ export default function BottomBar({
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
           placeholder="Message…"
-          className="min-h-[48px] resize-none rounded-2xl"
+          className="min-h-12 resize-none rounded-2xl"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();

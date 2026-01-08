@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import ChatSidebar from "./chat-sidebar";
 import TranslatorScreen from "./translator-screen";
 import type { Chat, TranscriptItem, BottomMode } from "./types";
@@ -36,7 +42,6 @@ export default function TranslatorShell() {
   const [mode, setMode] = useState<BottomMode>("text");
   const [translationMs, setTranslationMs] = useState<number | null>(null); // shows latest translation time in header
   const firstChatId = useMemo(() => makeId(), []);
-  // TODO: fix Date.now impure function
   const [chats, setChats] = useState<Chat[]>([
     { id: firstChatId, title: "New chat", updatedAt: Date.now() },
   ]);
@@ -168,6 +173,10 @@ export default function TranslatorShell() {
         {/* Mobile sidebar */}
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="w-[320px] p-0 md:hidden">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Chat history</SheetTitle>
+              <SheetDescription>Your saved translation chats</SheetDescription>
+            </SheetHeader>
             <ChatSidebar
               chats={chats}
               activeChatId={activeChatId}

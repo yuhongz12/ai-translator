@@ -35,7 +35,7 @@ export default function TranslatorScreen(props: Props) {
   return (
     <div className="flex h-full w-full flex-col">
       {/* Top bar (sticky like ChatGPT) */}
-      <div className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur supports-backdrop-filter:bg-background/60">
         <div className="mx-auto w-full max-w-3xl px-3 py-3 sm:px-6">
           <LanguageHeader
             fromLang={props.fromLang}
@@ -59,7 +59,7 @@ export default function TranslatorScreen(props: Props) {
       </div>
 
       {/* Composer (sticky bottom, iOS-friendly) */}
-      <div className="sticky bottom-0 border-t bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="sticky bottom-0 border-t bg-background/80 backdrop-blur supports-backdrop-filter:bg-background/60">
         <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 sm:px-6">
           <BottomBar
             mode={props.mode}
