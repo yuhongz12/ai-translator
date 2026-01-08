@@ -6,21 +6,35 @@ import ChatSidebar from "./chat-sidebar";
 import TranslatorScreen from "./translator-screen";
 import type { Chat, TranscriptItem, BottomMode } from "./types";
 
+// generate an ID for a new chat window
 function makeId() {
-  return (globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.random())).toString();
+  return (
+    globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.random())
+  ).toString();
 }
 
-async function fakeTranslate(text: string, _from: string, to: string) {
-  await new Promise((r) => setTimeout(r, 120 + Math.random() * 160));
-  return `[${to}] ${text}`;
+async function translateViaApi(args: {
+  text: string;
+  fromLang: string;
+  toLang: string;
+  model?: string;
+}) {
+  const res = await fetch("/api/translate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error ?? "Translation failed.");
+  return data as { translation: string; serverMs?: number; model?: string };
 }
 
 export default function TranslatorShell() {
   const [fromLang, setFromLang] = useState("English");
   const [toLang, setToLang] = useState("Chinese");
   const [mode, setMode] = useState<BottomMode>("text");
-  const [translationMs, setTranslationMs] = useState<number | null>(null);
-
+  const [translationMs, setTranslationMs] = useState<number | null>(null); // shows latest translation time in header
   const firstChatId = useMemo(() => makeId(), []);
   // TODO: fix Date.now impure function
   const [chats, setChats] = useState<Chat[]>([
@@ -28,7 +42,9 @@ export default function TranslatorShell() {
   ]);
   const [activeChatId, setActiveChatId] = useState(firstChatId);
 
-  const [messagesByChat, setMessagesByChat] = useState<Record<string, TranscriptItem[]>>({
+  const [messagesByChat, setMessagesByChat] = useState<
+    Record<string, TranscriptItem[]>
+  >({
     [firstChatId]: [],
   });
 
@@ -44,7 +60,10 @@ export default function TranslatorShell() {
 
   function newChat() {
     const id = makeId();
-    setChats((prev) => [{ id, title: "New chat", updatedAt: Date.now() }, ...prev]);
+    setChats((prev) => [
+      { id, title: "New chat", updatedAt: Date.now() },
+      ...prev,
+    ]);
     setMessagesByChat((prev) => ({ ...prev, [id]: [] }));
     setActiveChatId(id);
     setTranslationMs(null);
@@ -61,24 +80,23 @@ export default function TranslatorShell() {
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    const start = performance.now();
-    const translated = await fakeTranslate(trimmed, fromLang, toLang);
-    const ms = performance.now() - start;
-    setTranslationMs(ms);
-
-    const item: TranscriptItem = {
-      id: makeId(),
+    // optimistic item
+    const pendingId = makeId();
+    const pendingItem: TranscriptItem = {
+      id: pendingId,
       sourceLanguage: fromLang,
       sourceText: trimmed,
-      translatedText: translated,
-      showPlayForTranslation: true,
+      translatedText: "Translating…",
+      showPlayForTranslation: false,
+      pending: true,
     };
 
     setMessagesByChat((prev) => ({
       ...prev,
-      [activeChatId]: [...(prev[activeChatId] ?? []), item],
+      [activeChatId]: [...(prev[activeChatId] ?? []), pendingItem],
     }));
 
+    // title update
     setChats((prev) =>
       prev
         .map((c) => {
@@ -88,6 +106,50 @@ export default function TranslatorShell() {
         })
         .sort((a, b) => b.updatedAt - a.updatedAt)
     );
+
+    const t0 = performance.now();
+    try {
+      const data = await translateViaApi({
+        text: trimmed,
+        fromLang,
+        toLang,
+        model: "llama-3.3-70b-versatile",
+      });
+
+      const clientMs = performance.now() - t0;
+      const ms = Math.round(data.serverMs ?? clientMs);
+      setTranslationMs(ms);
+
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [activeChatId]: (prev[activeChatId] ?? []).map((m) =>
+          m.id === pendingId
+            ? {
+                ...m,
+                translatedText: data.translation,
+                showPlayForTranslation: true,
+                pending: false,
+                latencyMs: ms,
+              }
+            : m
+        ),
+      }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [activeChatId]: (prev[activeChatId] ?? []).map((m) =>
+          m.id === pendingId
+            ? {
+                ...m,
+                translatedText: "Failed to translate.",
+                pending: false,
+                error: e?.message ?? "Failed to translate.",
+              }
+            : m
+        ),
+      }));
+    }
   }
 
   return (

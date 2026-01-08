@@ -4,6 +4,10 @@ export type TranscriptItem = {
   sourceText: string;
   translatedText?: string;
   showPlayForTranslation?: boolean;
+
+  pending?: boolean;
+  error?: string;
+  latencyMs?: number;
 };
 
 export type BottomMode = "voice" | "text";
