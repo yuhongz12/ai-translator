@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquare, Plus } from "lucide-react";
+import { MessageSquare, SquarePen } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -25,15 +25,17 @@ export default function ChatSidebar({
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-2 p-3">
         <div className="text-sm font-medium">Chats</div>
-        <Button
-          size="icon"
+      </div>
+
+
+      <Button
           variant="secondary"
-          className="h-9 w-9"
+          className="m-3 rounded-xl justify-center"
           onClick={onNewChat}
         >
-          <Plus className="h-4 w-4" />
+          <SquarePen className="mr-2 h-4 w-4" />
+          New chat
         </Button>
-      </div>
 
       <Separator />
 
