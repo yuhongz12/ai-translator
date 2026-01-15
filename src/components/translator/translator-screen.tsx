@@ -52,7 +52,7 @@ export default function TranslatorScreen(props: Props) {
       </div>
 
       {/* Messages (centered column like ChatGPT desktop) */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden mt-6">
         <div className="mx-auto h-full w-full max-w-3xl px-3 sm:px-6">
           <MessageList items={props.messages} />
         </div>
