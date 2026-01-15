@@ -1,5 +1,5 @@
 import { groq } from "@ai-sdk/groq";
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import { performance } from "node:perf_hooks";
 
 export const maxDuration = 30; // aligns with Groq AI SDK examples
@@ -7,6 +7,7 @@ export const maxDuration = 30; // aligns with Groq AI SDK examples
 type Body = {
   text: string;
   fromLang: string;
+  prompt: string;
   toLang: string;
   model?: string;
 };
@@ -26,7 +27,7 @@ function buildSystemPrompt(fromLang: string, toLang: string) {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
-    const text = (body.text ?? "").trim();
+    const text = (body.text ?? body.prompt ?? "").trim();
     const fromLang = (body.fromLang ?? "").trim() || "Auto";
     const toLang = (body.toLang ?? "").trim();
 
@@ -44,22 +45,18 @@ export async function POST(req: Request) {
 
     const t0 = performance.now();
 
-    const result = await generateText({
+    const result = await streamText({
       model: groq(modelId),
       temperature: 0,
+      maxOutputTokens: 1024,
       messages: [
         { role: "system", content: buildSystemPrompt(fromLang, toLang) },
         { role: "user", content: text },
       ],
     });
 
-    const serverMs = performance.now() - t0;
 
-    return Response.json({
-      translation: result.text.trim(),
-      serverMs,
-      model: modelId,
-    });
+  return result.toUIMessageStreamResponse();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     return Response.json(

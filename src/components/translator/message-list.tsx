@@ -6,7 +6,7 @@ import type { TranscriptItem } from "./types";
 
 export default function MessageList({ items }: { items: TranscriptItem[] }) {
   return (
-    <ScrollArea className="h-full">
+    <ScrollArea className="h-full pr-4 overflow-y-auto [scrollbar-gutter:stable]">
       <div className="space-y-4 pb-4">
         {items.map((it, idx) => (
           <Fragment key={it.id}>

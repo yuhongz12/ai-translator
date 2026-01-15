@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useCompletion } from "@ai-sdk/react";
 import {
   Sheet,
   SheetContent,
@@ -12,35 +13,24 @@ import ChatSidebar from "./chat-sidebar";
 import TranslatorScreen from "./translator-screen";
 import type { Chat, TranscriptItem, BottomMode } from "./types";
 
-// generate an ID for a new chat window
 function makeId() {
   return (
     globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.random())
   ).toString();
 }
 
-async function translateViaApi(args: {
-  text: string;
-  fromLang: string;
-  toLang: string;
-  model?: string;
-}) {
-  const res = await fetch("/api/translate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  });
-
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error ?? "Translation failed.");
-  return data as { translation: string; serverMs?: number; model?: string };
-}
+type StreamTarget = {
+  chatId: string;
+  messageId: string;
+  startedAt: number;
+};
 
 export default function TranslatorShell() {
   const [fromLang, setFromLang] = useState("English");
   const [toLang, setToLang] = useState("Chinese");
   const [mode, setMode] = useState<BottomMode>("text");
-  const [translationMs, setTranslationMs] = useState<number | null>(null); // shows latest translation time in header
+  const [translationMs, setTranslationMs] = useState<number | null>(null);
+
   const firstChatId = useMemo(() => makeId(), []);
   const [chats, setChats] = useState<Chat[]>([
     { id: firstChatId, title: "New chat", updatedAt: Date.now() },
@@ -56,6 +46,89 @@ export default function TranslatorShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const messages = messagesByChat[activeChatId] ?? [];
 
+  const [streamTarget, setStreamTarget] = useState<StreamTarget | null>(null);
+  const streamTargetRef = useRef<StreamTarget | null>(null);
+
+  const {
+    completion,
+    complete,
+    isLoading,
+    stop,
+    setCompletion,
+  } = useCompletion({
+    api: "/api/translate",
+    // You are using toUIMessageStreamResponse(), so keep the default streamProtocol = 'data'. :contentReference[oaicite:2]{index=2}
+    experimental_throttle: 40, // reduces re-render frequency during streaming :contentReference[oaicite:3]{index=3}
+
+    onFinish: (_prompt, finalText) => {
+      const target = streamTargetRef.current;
+      if (!target) return;
+
+      const ms = Math.round(performance.now() - target.startedAt);
+      setTranslationMs(ms);
+
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [target.chatId]: (prev[target.chatId] ?? []).map((m) =>
+          m.id === target.messageId
+            ? {
+                ...m,
+                translatedText: finalText.trim() || "",
+                showPlayForTranslation: true,
+                pending: false,
+                latencyMs: ms,
+              }
+            : m
+        ),
+      }));
+
+      setStreamTarget(null);
+      streamTargetRef.current = null;
+    },
+
+    onError: (err) => {
+      const target = streamTargetRef.current;
+      if (!target) return;
+
+      setMessagesByChat((prev) => ({
+        ...prev,
+        [target.chatId]: (prev[target.chatId] ?? []).map((m) =>
+          m.id === target.messageId
+            ? {
+                ...m,
+                translatedText: "Failed to translate.",
+                pending: false,
+                error: err?.message ?? "Failed to translate.",
+              }
+            : m
+        ),
+      }));
+
+      setStreamTarget(null);
+      streamTargetRef.current = null;
+    },
+  });
+
+  // Stream updates: write the current `completion` into the pending message.
+  useEffect(() => {
+    if (!streamTarget) return;
+
+    setMessagesByChat((prev) => ({
+      ...prev,
+      [streamTarget.chatId]: (prev[streamTarget.chatId] ?? []).map((m) =>
+        m.id === streamTarget.messageId
+          ? {
+              ...m,
+              translatedText: completion || "Translating…",
+              // keep pending true until onFinish flips it
+              pending: true,
+              showPlayForTranslation: false,
+            }
+          : m
+      ),
+    }));
+  }, [completion, streamTarget]);
+
   function swapLanguages() {
     setFromLang((prev) => {
       setToLang(prev);
@@ -64,6 +137,9 @@ export default function TranslatorShell() {
   }
 
   function newChat() {
+    // optional: stop current stream when starting new chat
+    if (isLoading) stop();
+
     const id = makeId();
     setChats((prev) => [
       { id, title: "New chat", updatedAt: Date.now() },
@@ -76,6 +152,9 @@ export default function TranslatorShell() {
   }
 
   function selectChat(id: string) {
+    // optional: stop current stream when switching chats
+    if (isLoading) stop();
+
     setActiveChatId(id);
     setTranslationMs(null);
     setSidebarOpen(false);
@@ -85,7 +164,9 @@ export default function TranslatorShell() {
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    // optimistic item
+    // If you only want 1 in-flight translation at a time:
+    if (isLoading) stop();
+
     const pendingId = makeId();
     const pendingItem: TranscriptItem = {
       id: pendingId,
@@ -101,7 +182,6 @@ export default function TranslatorShell() {
       [activeChatId]: [...(prev[activeChatId] ?? []), pendingItem],
     }));
 
-    // title update
     setChats((prev) =>
       prev
         .map((c) => {
@@ -112,49 +192,26 @@ export default function TranslatorShell() {
         .sort((a, b) => b.updatedAt - a.updatedAt)
     );
 
-    const t0 = performance.now();
-    try {
-      const data = await translateViaApi({
+    setTranslationMs(null);
+    setCompletion(""); // clear previous stream output
+    const target: StreamTarget = {
+      chatId: activeChatId,
+      messageId: pendingId,
+      startedAt: performance.now(),
+    };
+    setStreamTarget(target);
+    streamTargetRef.current = target;
+
+    // Start streaming. `complete` kicks off a request; stream updates land in `completion`. :contentReference[oaicite:4]{index=4}
+    complete(trimmed, {
+      body: {
+        // keep sending the full payload your route expects:
         text: trimmed,
         fromLang,
         toLang,
         model: "llama-3.3-70b-versatile",
-      });
-
-      const clientMs = performance.now() - t0;
-      const ms = Math.round(data.serverMs ?? clientMs);
-      setTranslationMs(ms);
-
-      setMessagesByChat((prev) => ({
-        ...prev,
-        [activeChatId]: (prev[activeChatId] ?? []).map((m) =>
-          m.id === pendingId
-            ? {
-                ...m,
-                translatedText: data.translation,
-                showPlayForTranslation: true,
-                pending: false,
-                latencyMs: ms,
-              }
-            : m
-        ),
-      }));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      setMessagesByChat((prev) => ({
-        ...prev,
-        [activeChatId]: (prev[activeChatId] ?? []).map((m) =>
-          m.id === pendingId
-            ? {
-                ...m,
-                translatedText: "Failed to translate.",
-                pending: false,
-                error: e?.message ?? "Failed to translate.",
-              }
-            : m
-        ),
-      }));
-    }
+      },
+    });
   }
 
   return (
@@ -199,6 +256,9 @@ export default function TranslatorShell() {
               onOpenSidebar={() => setSidebarOpen(true)}
               messages={messages}
               onSendText={onSendText}
+              // optionally pass these down if you want a stop button in TranslatorScreen
+              // isLoading={isLoading}
+              // onStop={stop}
             />
           </main>
         </Sheet>
