@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import type { Chat } from "./types";
 import LogoutButton from "../ui/logout-button";
+import ProlingualLogo from "./logo";
 
 type Props = {
   chats: Chat[];
@@ -24,8 +25,13 @@ export default function ChatSidebar({
 }: Props) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 p-3">
-        <div className="text-sm font-medium">Chats</div>
+
+      <div className="p-3 flex justify-left">
+        <ProlingualLogo variant="default" className="text-3xl" />
+      </div>
+
+      <div className="flex items-center justify-between gap-2 px-3">
+        <div className="text-md font-medium">Chats</div>
       </div>
 
 
