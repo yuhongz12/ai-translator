@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import LanguageHeader from "./language-header";
 import MessageList from "./message-list";
 import BottomBar from "./bottom-bar";
@@ -21,6 +21,13 @@ type Props = {
 
   messages: TranscriptItem[];
   onSendText: (text: string) => Promise<void>;
+  onSendFile: (file: File) => Promise<void>;
+
+  onAttachFiles: (files: File[]) => Promise<void>;
+  attachments?: { id: string; name: string; status: "uploading" | "ready" | "error" }[];
+  onRemoveAttachment?: (id: string) => void;
+
+  sendLocked: boolean;
 };
 
 export default function TranslatorScreen(props: Props) {
@@ -31,6 +38,13 @@ export default function TranslatorScreen(props: Props) {
     setInput("");
     await props.onSendText(text);
   }
+
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Scroll when a new message is appended (send/file/etc)
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [props.messages.length]);
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -54,7 +68,7 @@ export default function TranslatorScreen(props: Props) {
       {/* Messages (centered column like ChatGPT desktop) */}
       <div className="flex-1 overflow-hidden mt-6">
         <div className="mx-auto h-full w-full max-w-3xl px-3 sm:px-6">
-          <MessageList items={props.messages} />
+          <MessageList items={props.messages} bottomRef={bottomRef} />
         </div>
       </div>
 
@@ -68,6 +82,10 @@ export default function TranslatorScreen(props: Props) {
             onSend={onSend}
             onMic={() => props.onToggleMode("voice")}
             onStop={() => props.onToggleMode("text")}
+            onAttachFiles={props.onAttachFiles}
+            attachments={props.attachments}
+            onRemoveAttachment={props.onRemoveAttachment}
+            sendLocked={props.sendLocked}
           />
         </div>
       </div>

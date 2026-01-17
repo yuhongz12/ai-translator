@@ -1,6 +1,7 @@
 "use client";
 
-import { Mic, Paperclip, SendHorizontal, Square } from "lucide-react";
+import { useRef } from "react";
+import { Loader2, Mic, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import Waveform from "./waveform";
@@ -14,9 +15,12 @@ type Props = {
   onMic: () => void;
   onStop: () => void;
 
-  // optional hooks you can wire later
-  onAttach?: () => void;
-};
+  onAttachFiles: (files: File[]) => Promise<void>;
+  attachments?: { id: string; name: string; status: "uploading" | "ready" | "error" }[];
+  onRemoveAttachment?: (id: string) => void;
+
+  sendLocked?: boolean;
+}
 
 export default function BottomBar({
   mode,
@@ -25,84 +29,104 @@ export default function BottomBar({
   onSend,
   onMic,
   onStop,
-  onAttach,
+  onAttachFiles,
+  sendLocked
 }: Props) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   if (mode === "voice") {
     return (
       <div className="flex items-center gap-3">
         <div className="flex h-12 flex-1 items-center justify-between rounded-2xl bg-muted px-4">
           <Waveform />
         </div>
-        <Button
-          type="button"
-          size="icon"
-          className="h-12 w-12 rounded-2xl"
-          onClick={onStop}
-          aria-label="Stop"
-        >
+        <Button type="button" size="icon" className="h-12 w-12 rounded-2xl" onClick={onStop} aria-label="Stop">
           <Square className="h-5 w-5" />
         </Button>
       </div>
     );
   }
 
+
   const canSend = input.trim().length > 0;
+  const canActuallySend = canSend && !sendLocked;
 
   return (
-    <div className="flex items-end gap-2">
-      {/* Left controls */}
-      <div className="flex items-center gap-2 pb-1">
-        <Button
-          type="button"
-          size="icon"
-          variant="secondary"
-          className="h-11 w-11 rounded-2xl"
-          onClick={onAttach}
-          aria-label="Add files"
-        >
-          <Paperclip className="h-5 w-5" />
-        </Button>
+    <div className="flex flex-col gap-2">
 
-        <Button
-          type="button"
-          size="icon"
-          variant="secondary"
-          className="h-11 w-11 rounded-2xl"
-          onClick={onMic}
-          aria-label="Voice"
-        >
-          <Mic className="h-5 w-5" />
-        </Button>
-      </div>
-
-      {/* Text input */}
-      <div className="flex-1">
-        <Textarea
-          value={input}
-          onChange={(e) => onInputChange(e.target.value)}
-          placeholder="Message…"
-          className="min-h-12 resize-none rounded-2xl"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              if (canSend) onSend();
-            }
+      <div className="flex items-end gap-2">
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          multiple
+          onChange={async (e) => {
+            const files = Array.from(e.currentTarget.files ?? []);
+            // reset so picking the same file again still triggers change
+            e.currentTarget.value = "";
+            if (files.length) await onAttachFiles(files);
           }}
         />
-      </div>
 
-      {/* Send */}
-      <div className="pb-1">
-        <Button
-          type="button"
-          size="icon"
-          className="h-11 w-11 rounded-2xl"
-          onClick={onSend}
-          aria-label="Send"
-          disabled={!canSend}
-        >
-          <SendHorizontal className="h-5 w-5" />
-        </Button>
+        {/* Left controls */}
+        <div className="flex items-center gap-2 pb-1">
+          <Button
+            type="button"
+            size="icon"
+            variant="secondary"
+            className="h-11 w-11 rounded-2xl"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Add files"
+          >
+            <Paperclip className="h-5 w-5" />
+          </Button>
+
+          <Button
+            type="button"
+            size="icon"
+            variant="secondary"
+            className="h-11 w-11 rounded-2xl"
+            onClick={onMic}
+            aria-label="Voice"
+          >
+            <Mic className="h-5 w-5" />
+          </Button>
+        </div>
+
+        {/* Text input */}
+        <div className="flex-1">
+          <Textarea
+            value={input}
+            onChange={(e) => onInputChange(e.target.value)}
+            placeholder="Message…"
+            className="min-h-12 resize-none rounded-2xl"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (canSend) onSend();
+              }
+            }}
+          />
+        </div>
+
+        {/* Send */}
+        <div className="pb-1">
+          <Button
+            type="button"
+            size="icon"
+            className="h-11 w-11 rounded-2xl"
+            onClick={onSend}
+            aria-label="Send"
+            disabled={!canActuallySend}
+          >
+            {sendLocked ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <SendHorizontal className="h-5 w-5" />
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   );
