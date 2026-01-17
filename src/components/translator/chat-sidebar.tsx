@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import type { Chat } from "./types";
+import LogoutButton from "../ui/logout-button";
 
 type Props = {
   chats: Chat[];
@@ -29,13 +30,13 @@ export default function ChatSidebar({
 
 
       <Button
-          variant="secondary"
-          className="m-3 rounded-xl justify-center"
-          onClick={onNewChat}
-        >
-          <SquarePen className="mr-2 h-4 w-4" />
-          New chat
-        </Button>
+        variant="secondary"
+        className="m-3 rounded-xl justify-center"
+        onClick={onNewChat}
+      >
+        <SquarePen className="mr-2 h-4 w-4" />
+        New chat
+      </Button>
 
       <Separator />
 
@@ -57,6 +58,15 @@ export default function ChatSidebar({
           ))}
         </div>
       </ScrollArea>
+
+      <Separator />
+      <LogoutButton
+        className="m-3"
+        onError={(msg) => {
+          // optional: show alert/toast in the sidebar
+          console.log(msg);
+        }}
+      />
 
       <div className="p-3 text-xs text-muted-foreground">
         Tip: first message becomes the title.

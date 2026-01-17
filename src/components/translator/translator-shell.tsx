@@ -15,6 +15,8 @@ import ChatSidebar from "./chat-sidebar";
 import TranslatorScreen from "./translator-screen";
 import type { Chat, TranscriptItem, BottomMode } from "./types";
 
+import { createClient } from "@/lib/supabase/client";
+
 function makeId() {
   return (
     globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.random())
@@ -71,11 +73,57 @@ async function extractTextViaApi(file: File): Promise<ExtractResult> {
   return data as ExtractResult;
 }
 
+type DBChatRow = {
+  id: string;
+  title: string;
+  updated_at: string;
+};
+
+type DBMessageRow = {
+  id: string;
+  chat_id: string;
+  source_language: string | null;
+  target_language: string | null;
+  source_text: string;
+  translated_text: string | null;
+  model: string | null;
+  latency_ms: number | null;
+  error: string | null;
+  created_at: string;
+};
+
+function mapChat(row: DBChatRow): Chat {
+  return {
+    id: row.id,
+    title: row.title ?? "New chat",
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
+}
+
+function mapMessage(row: DBMessageRow): TranscriptItem {
+  return {
+    id: row.id,
+    sourceLanguage: row.source_language ?? "",
+    sourceText: row.source_text ?? "",
+    translatedText: row.translated_text ?? "",
+    pending: row.translated_text === "Translating…" || !row.translated_text,
+    showPlayForTranslation: Boolean(row.translated_text && row.translated_text !== "Translating…"),
+    latencyMs: row.latency_ms ?? undefined,
+    error: row.error ?? undefined,
+  };
+}
+
 export default function TranslatorShell() {
+  // Create a single browser client instance for this component lifecycle.
+  const supabase = useMemo(() => createClient(), []);
+
   const [fromLang, setFromLang] = useState("English");
   const [toLang, setToLang] = useState("Chinese");
   const [mode, setMode] = useState<BottomMode>("text");
   const [translationMs, setTranslationMs] = useState<number | null>(null);
+
+  // App-level errors (auth/db load)
+  const [appError, setAppError] = useState<string | null>(null);
 
   // File failure alert state (accumulates messages until dismissed)
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -124,6 +172,172 @@ export default function TranslatorShell() {
     reject: (e: Error) => void;
   } | null>(null);
 
+  const waitForSession = useCallback(async () => {
+    // 1) try immediately
+    const { data } = await supabase.auth.getSession();
+    if (data.session) return data.session;
+
+    // 2) wait for hydration / auth event
+    return await new Promise((resolve) => {
+      const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session) {
+          sub.subscription.unsubscribe();
+          resolve(session);
+        }
+      });
+    });
+  }, [supabase]);
+
+  // ---------- Supabase DB helpers ----------
+  const requireUser = useCallback(async () => {
+    await waitForSession();
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw error;
+    if (!data.user) throw new Error("Not authenticated");
+    return data.user;
+  }, [supabase, waitForSession]);
+
+  const dbListChats = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("chats")
+      .select("id,title,updated_at")
+      .order("updated_at", { ascending: false });
+
+    if (error) throw error;
+    return (data ?? []) as DBChatRow[];
+  }, [supabase]);
+
+  const dbCreateChat = useCallback(
+    async (title = "New chat") => {
+      const user = await requireUser();
+
+      const { data, error } = await supabase
+        .from("chats")
+        .insert({
+          user_id: user.id,
+          title,
+          // updated_at defaults in DB; ok to omit
+        })
+        .select("id,title,updated_at")
+        .single();
+
+      if (error) throw error;
+      return data as DBChatRow;
+    },
+    [supabase, requireUser]
+  );
+
+  const dbListMessages = useCallback(
+    async (chatId: string) => {
+      const { data, error } = await supabase
+        .from("messages")
+        .select(
+          "id,chat_id,source_language,target_language,source_text,translated_text,model,latency_ms,error,created_at"
+        )
+        .eq("chat_id", chatId)
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      return (data ?? []) as DBMessageRow[];
+    },
+    [supabase]
+  );
+
+  const dbInsertMessage = useCallback(
+    async (chatId: string, payload: Partial<DBMessageRow>) => {
+      const user = await requireUser();
+
+      const { data, error } = await supabase
+        .from("messages")
+        .insert({
+          user_id: user.id,
+          chat_id: chatId,
+          ...payload,
+        })
+        .select(
+          "id,chat_id,source_language,target_language,source_text,translated_text,model,latency_ms,error,created_at"
+        )
+        .single();
+
+      if (error) throw error;
+      return data as DBMessageRow;
+    },
+    [supabase, requireUser]
+  );
+
+  const dbUpdateMessage = useCallback(
+    async (messageId: string, patch: Record<string, any>) => {
+      const { error } = await supabase
+        .from("messages")
+        .update(patch)
+        .eq("id", messageId);
+      if (error) throw error;
+    },
+    [supabase]
+  );
+
+  const dbTouchChat = useCallback(
+    async (chatId: string, patch?: { title?: string }) => {
+      const body: Record<string, any> = {
+        updated_at: new Date().toISOString(),
+        ...(patch?.title ? { title: patch.title } : {}),
+      };
+
+      const { error } = await supabase.from("chats").update(body).eq("id", chatId);
+      if (error) throw error;
+    },
+    [supabase]
+  );
+
+  // ---------- Load from DB on app start ----------
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await waitForSession();
+        setAppError(null);
+
+        // If you enforce auth at the page/layout level, this should always succeed.
+        await requireUser();
+
+        const rows = await dbListChats();
+        if (cancelled) return;
+
+        // If no chats exist, create one.
+        if (rows.length === 0) {
+          const created = await dbCreateChat("New chat");
+          if (cancelled) return;
+
+          const chat = mapChat(created);
+          setChats([chat]);
+          setActiveChatId(chat.id);
+          setMessagesByChat({ [chat.id]: [] });
+          return;
+        }
+
+        const nextChats = rows.map(mapChat);
+        setChats(nextChats);
+
+        const firstId = nextChats[0].id;
+        setActiveChatId(firstId);
+
+        const msgRows = await dbListMessages(firstId);
+        if (cancelled) return;
+
+        setMessagesByChat({ [firstId]: msgRows.map(mapMessage) });
+      } catch (e: any) {
+        if (cancelled) return;
+        setAppError(e?.message ?? "Failed to load chats.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requireUser, dbListChats, dbListMessages, dbCreateChat]);
+
+  // ---------- Streaming ----------
   const { completion, complete, isLoading, stop, setCompletion } = useCompletion({
     api: "/api/translate",
     experimental_throttle: 40,
@@ -150,6 +364,20 @@ export default function TranslatorShell() {
         ),
       }));
 
+      // Persist: finalize message + touch chat
+      void (async () => {
+        try {
+          await dbUpdateMessage(target.messageId, {
+            translated_text: finalText.trim() || "",
+            latency_ms: ms,
+            error: null,
+          });
+          await dbTouchChat(target.chatId);
+        } catch (e: any) {
+          pushUploadError(`DB update failed: ${e?.message ?? "unknown error"}`);
+        }
+      })();
+
       // Resolve awaiting sender if it matches
       const inflight = inFlightRef.current;
       if (inflight?.messageId === target.messageId) {
@@ -160,10 +388,11 @@ export default function TranslatorShell() {
       setStreamTarget(null);
       streamTargetRef.current = null;
     },
-
     onError: (err) => {
       const target = streamTargetRef.current;
       if (!target) return;
+
+      const msg = err?.message ?? "Failed to translate.";
 
       setMessagesByChat((prev) => ({
         ...prev,
@@ -178,6 +407,19 @@ export default function TranslatorShell() {
             : m
         ),
       }));
+
+      // Persist: mark message error
+      void (async () => {
+        try {
+          await dbUpdateMessage(target.messageId, {
+            translated_text: "Failed to translate.",
+            error: msg,
+          });
+          await dbTouchChat(target.chatId);
+        } catch (e: any) {
+          pushUploadError(`DB update failed: ${e?.message ?? "unknown error"}`);
+        }
+      })();
 
       // Reject awaiting sender if it matches
       const inflight = inFlightRef.current;
@@ -237,28 +479,42 @@ export default function TranslatorShell() {
     setFromLang(currentTo);
   }, [fromLang, toLang]);
 
-  const newChat = useCallback(() => {
+  const newChat = useCallback(async () => {
     cancelInFlight("New chat");
 
-    const id = makeId();
-    setChats((prev) => [
-      { id, title: "New chat", updatedAt: Date.now() },
-      ...prev,
-    ]);
-    setMessagesByChat((prev) => ({ ...prev, [id]: [] }));
-    setActiveChatId(id);
-    setTranslationMs(null);
-    setSidebarOpen(false);
-  }, [cancelInFlight]);
+    try {
+      const created = await dbCreateChat("New chat");
+      const chat = mapChat(created);
+
+      setChats((prev) => [chat, ...prev]);
+      setMessagesByChat((prev) => ({ ...prev, [chat.id]: [] }));
+      setActiveChatId(chat.id);
+      setTranslationMs(null);
+      setSidebarOpen(false);
+    } catch (e: any) {
+      pushUploadError(`Failed to create chat: ${e?.message ?? "unknown error"}`);
+    }
+  }, [cancelInFlight, dbCreateChat, pushUploadError]);
 
   const selectChat = useCallback(
-    (id: string) => {
+    async (id: string) => {
       cancelInFlight("Switched chat");
+
       setActiveChatId(id);
       setTranslationMs(null);
       setSidebarOpen(false);
+
+      // If already loaded, don’t refetch.
+      if (messagesByChat[id]) return;
+
+      try {
+        const rows = await dbListMessages(id);
+        setMessagesByChat((prev) => ({ ...prev, [id]: rows.map(mapMessage) }));
+      } catch (e: any) {
+        pushUploadError(`Failed to load messages: ${e?.message ?? "unknown error"}`);
+      }
     },
-    [cancelInFlight]
+    [cancelInFlight, dbListMessages, messagesByChat, pushUploadError]
   );
 
   /**
@@ -273,27 +529,44 @@ export default function TranslatorShell() {
 
       const cancel = opts.cancelInFlight ?? true;
 
-      // If user is trying to send a typed message while file processing is active,
-      // block it. (File-triggered sends call onSendText(..., { cancelInFlight:false })
-      // so they bypass this guard.)
-      if (sendLocked && cancel) {
-        // Optional: show a UI message / toast instead of silently returning
-        // pushUploadError("Files are processing—please wait before sending a message.");
-        return;
-      }
-
+      // Block typed sends while files are processing (file-triggered uses cancelInFlight:false)
+      if (sendLocked && cancel) return;
 
       if (inFlightRef.current) {
         if (cancel) cancelInFlight("Canceled by new send");
-        else await inFlightRef.current.done; // queue behind existing stream
+        else await inFlightRef.current.done;
       }
 
-      // Snapshot current state at send-time
       const chatId = activeChatId;
       const from = fromLang;
       const to = toLang;
 
-      const pendingId = makeId();
+      // Decide title update (first message)
+      const existingChat = chats.find((c) => c.id === chatId);
+      const shouldSetTitle = existingChat?.title === "New chat";
+      const nextTitle = shouldSetTitle ? trimmed.slice(0, 28) : undefined;
+
+      // 1) Insert message row first (use DB id as message id)
+      let row: DBMessageRow;
+      try {
+        row = await dbInsertMessage(chatId, {
+          source_language: from,
+          target_language: to,
+          source_text: trimmed,
+          translated_text: "Translating…",
+          model: "llama-3.3-70b-versatile",
+        });
+
+        // Touch chat updated_at + set title (optional)
+        await dbTouchChat(chatId, nextTitle ? { title: nextTitle } : undefined);
+      } catch (e: any) {
+        pushUploadError(`Failed to save message: ${e?.message ?? "unknown error"}`);
+        return;
+      }
+
+      const pendingId = row.id;
+
+      // 2) Update UI immediately (optimistic)
       const pendingItem: TranscriptItem = {
         id: pendingId,
         sourceLanguage: from,
@@ -312,9 +585,11 @@ export default function TranslatorShell() {
         prev
           .map((c) => {
             if (c.id !== chatId) return c;
-            const title =
-              c.title === "New chat" ? trimmed.slice(0, 28) : c.title;
-            return { ...c, title, updatedAt: Date.now() };
+            return {
+              ...c,
+              title: nextTitle ?? c.title,
+              updatedAt: Date.now(),
+            };
           })
           .sort((a, b) => b.updatedAt - a.updatedAt)
       );
@@ -322,6 +597,7 @@ export default function TranslatorShell() {
       setTranslationMs(null);
       setCompletion("");
 
+      // 3) Start stream, target the DB message id
       const target: StreamTarget = {
         chatId,
         messageId: pendingId,
@@ -330,7 +606,7 @@ export default function TranslatorShell() {
       setStreamTarget(target);
       streamTargetRef.current = target;
 
-      // Promise bridge: resolve/reject happens in onFinish/onError
+      // Promise bridge: resolved/rejected in onFinish/onError
       let resolve!: () => void;
       let reject!: (e: Error) => void;
       const done = new Promise<void>((res, rej) => {
@@ -345,12 +621,27 @@ export default function TranslatorShell() {
           fromLang: from,
           toLang: to,
           model: "llama-3.3-70b-versatile",
+          // optional: include ids so your /api/translate can also save server-side if you want later
+          chatId,
+          messageId: pendingId,
         },
       });
 
       await done;
     },
-    [activeChatId, fromLang, toLang, complete, setCompletion, cancelInFlight, sendLocked]
+    [
+      activeChatId,
+      chats,
+      fromLang,
+      toLang,
+      complete,
+      setCompletion,
+      cancelInFlight,
+      sendLocked,
+      dbInsertMessage,
+      dbTouchChat,
+      pushUploadError,
+    ]
   );
 
   /**
@@ -376,43 +667,27 @@ export default function TranslatorShell() {
         const id = pending[i].id;
 
         try {
-          // 1) Extract
           const { text, filename, mime, chars } = await extractTextViaApi(file);
 
           setAttachments((prev) =>
             prev.map((a) =>
-              a.id === id ? { ...a, name: filename, status: "ready", mime, chars } : a
+              a.id === id
+                ? { ...a, name: filename, status: "ready", mime, chars }
+                : a
             )
           );
 
-          // 2) Translate (queued behind any current stream)
           const payload = text
             ? `(File: ${filename})\n\n${text}`
             : `[${filename}] (No extractable text found)`;
 
-          try {
-            await onSendText(payload, { cancelInFlight: false });
-
-            // Remove chip after translation completes successfully
-            setAttachments((prev) => prev.filter((a) => a.id !== id));
-          } catch (e: any) {
-            const msg = e instanceof Error ? e.message : String(e);
-
-            setAttachments((prev) =>
-              prev.map((a) =>
-                a.id === id ? { ...a, status: "error", error: msg } : a
-              )
-            );
-
-            pushUploadError(`Translation failed for "${filename}": ${msg}`);
-          }
+          await onSendText(payload, { cancelInFlight: false });
+          setAttachments((prev) => prev.filter((a) => a.id !== id));
         } catch (e: any) {
           const msg = e instanceof Error ? e.message : String(e);
 
           setAttachments((prev) =>
-            prev.map((a) =>
-              a.id === id ? { ...a, status: "error", error: msg } : a
-            )
+            prev.map((a) => (a.id === id ? { ...a, status: "error", error: msg } : a))
           );
 
           pushUploadError(`File processing failed for "${file.name}": ${msg}`);
@@ -441,7 +716,7 @@ export default function TranslatorShell() {
       {uploadErrors.length > 0 && (
         <div className="border-b bg-background p-3">
           <Alert variant="destructive" className="relative">
-            <AlertTitle>File upload failed</AlertTitle>
+            <AlertTitle>An error has occurred</AlertTitle>
             <AlertDescription>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {uploadErrors.map((m, idx) => (
