@@ -130,6 +130,15 @@ export default function TranslatorShell() {
   const pushUploadError = useCallback((msg: string) => {
     setUploadErrors((prev) => [...prev, msg]);
   }, []);
+  useEffect(() => {
+    if (uploadErrors.length === 0) return;
+
+    const t = window.setTimeout(() => {
+      setUploadErrors([]);
+    }, 3000);
+
+    return () => window.clearTimeout(t);
+  }, [uploadErrors.length, setUploadErrors]);
 
   const firstChatId = useMemo(() => makeId(), []);
   const [chats, setChats] = useState<Chat[]>([
@@ -288,6 +297,12 @@ export default function TranslatorShell() {
     },
     [supabase]
   );
+
+  async function dbDeleteChat(chatId: string) {
+    const { error } = await supabase.from("chats").delete().eq("id", chatId);
+    if (error) throw error;
+  }
+
 
   // ---------- Load from DB on app start ----------
   useEffect(() => {
@@ -517,6 +532,81 @@ export default function TranslatorShell() {
     [cancelInFlight, dbListMessages, messagesByChat, pushUploadError]
   );
 
+  const onDeleteChat = useCallback(
+  async (id: string) => {
+    const deletingActive = id === activeChatId;
+
+    // Decide what the next active chat should be (before we mutate state)
+    const remaining = chats.filter((c) => c.id !== id);
+    const nextActiveId = deletingActive ? (remaining[0]?.id ?? null) : activeChatId;
+
+    if (deletingActive) cancelInFlight("Deleted chat");
+
+    // ---- Optimistic UI updates ----
+    setChats(remaining);
+
+    setMessagesByChat((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    setTranslationMs(null);
+    setSidebarOpen(false);
+
+    // If we deleted the active chat, switch now
+    if (deletingActive) {
+      if (nextActiveId) {
+        setActiveChatId(nextActiveId);
+
+        // Load messages if not cached
+        if (!messagesByChat[nextActiveId]) {
+          try {
+            const rows = await dbListMessages(nextActiveId);
+            setMessagesByChat((prev) => ({
+              ...prev,
+              [nextActiveId]: rows.map(mapMessage),
+            }));
+          } catch (e: any) {
+            pushUploadError(`Failed to load messages: ${e?.message ?? "unknown error"}`);
+          }
+        }
+      } else {
+        // Deleted the last chat -> create a new one
+        try {
+          const created = await dbCreateChat("New chat");
+          const chat = mapChat(created);
+
+          setChats([chat]);
+          setActiveChatId(chat.id);
+          setMessagesByChat({ [chat.id]: [] });
+        } catch (e: any) {
+          pushUploadError(`Failed to create chat: ${e?.message ?? "unknown error"}`);
+        }
+      }
+    }
+
+    // ---- Persist delete in DB (after UI stays responsive) ----
+    try {
+      await dbDeleteChat(id); // cascade delete messages or delete them first inside this function
+    } catch (e: any) {
+      pushUploadError(`Failed to delete chat: ${e?.message ?? "unknown error"}`);
+      // Optional: refetch chats here if you want to fully recover UI.
+    }
+  },
+  [
+    activeChatId,
+    chats,
+    messagesByChat,
+    cancelInFlight,
+    dbDeleteChat,
+    dbListMessages,
+    dbCreateChat,
+    pushUploadError,
+  ]
+);
+
+
   /**
    * Send text for translation.
    * - cancelInFlight = true: cancel current stream (typed send behavior)
@@ -711,10 +801,10 @@ export default function TranslatorShell() {
   }, []);
 
   return (
-    <div className="h-dvh bg-background">
+    <div className="h-dvh relative bg-background">
       {/* Error alert (dismissible, shows all recent upload failures) */}
       {uploadErrors.length > 0 && (
-        <div className="border-b bg-background p-3">
+        <div className="fixed left-1/2 top-3 z-50 w-[min(720px,calc(100%-1.5rem))] -translate-x-1/2">
           <Alert variant="destructive" className="relative">
             <AlertTitle>An error has occurred</AlertTitle>
             <AlertDescription>
@@ -748,6 +838,7 @@ export default function TranslatorShell() {
             activeChatId={activeChatId}
             onSelect={selectChat}
             onNewChat={newChat}
+            onDeleteChat={onDeleteChat}
           />
         </aside>
 
@@ -764,6 +855,7 @@ export default function TranslatorShell() {
               activeChatId={activeChatId}
               onSelect={selectChat}
               onNewChat={newChat}
+              onDeleteChat={onDeleteChat}
             />
           </SheetContent>
 

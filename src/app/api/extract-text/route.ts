@@ -142,7 +142,7 @@ export async function POST(req: Request) {
         }
 
         // ---------- Unsupported ----------
-        return jsonError(415, `Unsupported file type.`, { filename, mime, ext });
+        return jsonError(415, `Unsupported file type. File translation only supported text, docx, and pdf files.`, { filename, mime, ext });
     } catch (err) {
         // Log full error server-side, return safe message to client
         const message = err instanceof Error ? err.message : String(err);

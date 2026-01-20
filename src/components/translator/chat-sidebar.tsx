@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquare, SquarePen } from "lucide-react";
+import { MessageSquare, SquarePen, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ type Props = {
   activeChatId: string;
   onSelect: (id: string) => void;
   onNewChat: () => void;
+  onDeleteChat: (id: string) => void;
 };
 
 export default function ChatSidebar({
@@ -22,7 +23,9 @@ export default function ChatSidebar({
   activeChatId,
   onSelect,
   onNewChat,
+  onDeleteChat
 }: Props) {
+
   return (
     <div className="flex h-full flex-col">
 
@@ -47,24 +50,43 @@ export default function ChatSidebar({
       <Separator />
 
       <ScrollArea className="flex-1">
-        <div className="p-2">
+        <div className="p-2 space-y-1">
           {chats.map((c) => (
-            <button
+            <div
               key={c.id}
-              onClick={() => onSelect(c.id)}
               className={cn(
-                "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm",
+                "group relative flex items-center gap-2 rounded-xl px-3 py-2",
                 "hover:bg-muted",
                 c.id === activeChatId && "bg-muted"
               )}
             >
-              <MessageSquare className="h-4 w-4 shrink-0 opacity-70" />
-              <span className="line-clamp-1">{c.title}</span>
-            </button>
+              <button
+                onClick={() => onSelect(c.id)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+              >
+                <MessageSquare className="h-4 w-4 shrink-0 opacity-70" />
+                <span className="line-clamp-1">{c.title}</span>
+              </button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
+                  if (confirm("Are you sure you want to delete this chat?")) {
+                    e.stopPropagation();
+                    onDeleteChat(c.id);
+                  }
+                }}
+                aria-label="Delete chat"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
           ))}
         </div>
       </ScrollArea>
-
       <Separator />
       <LogoutButton
         className="m-3"
